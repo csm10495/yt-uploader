@@ -239,10 +239,10 @@ def get_authenticated_service():
 class UploadProgressWindow:
     """Window showing upload progress."""
 
-    def __init__(self, parent, filename):
+    def __init__(self, parent, filename, file_size):
         self.window = tk.Toplevel(parent)
         self.window.title("Uploading...")
-        self.window.geometry("400x180")
+        self.window.geometry("400x200")
         self.window.resizable(False, False)
         self.window.transient(parent)
         # Don't use grab_set() - it blocks the window from being responsive
@@ -250,11 +250,13 @@ class UploadProgressWindow:
         self.cancelled = False
         self.parent = parent
         self._current_progress = 0
+        self.file_size = file_size  # Total file size in bytes
+        self.start_time = None  # Track upload start time
 
         # Center on parent
         self.window.update_idletasks()
         x = parent.winfo_x() + (parent.winfo_width() - 400) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - 180) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 200) // 2
         self.window.geometry(f"+{x}+{y}")
 
         frame = ttk.Frame(self.window, padding=20)
@@ -273,6 +275,14 @@ class UploadProgressWindow:
 
         self.percent_label = ttk.Label(status_frame, text="0%")
         self.percent_label.pack(side=tk.RIGHT, anchor=tk.E)
+
+        # Transfer info label (shows transferred/total and speed)
+        self.transfer_label = ttk.Label(frame, text=f"0 MB / {self._format_size(self.file_size)}")
+        self.transfer_label.pack(anchor=tk.W, pady=(5, 0))
+
+        # Speed/ETA label
+        self.speed_label = ttk.Label(frame, text="Calculating speed...")
+        self.speed_label.pack(anchor=tk.W)
 
         # Cancel button
         btn_frame = ttk.Frame(frame)
@@ -311,10 +321,67 @@ class UploadProgressWindow:
 
     def update_progress(self, progress):
         """Update progress bar (0-100)."""
+        import time
+
+        # Initialize start time on first progress update
+        if self.start_time is None and progress > 0:
+            self.start_time = time.time()
+
+        self._current_progress = progress
         self.progress['value'] = progress
         self.percent_label.config(text=f"{progress:.1f}%")
         self.status_label.config(text=f"Uploading... {progress:.1f}%")
+
+        # Calculate transferred bytes
+        transferred = int(self.file_size * progress / 100)
+        self.transfer_label.config(
+            text=f"{self._format_size(transferred)} / {self._format_size(self.file_size)}"
+        )
+
+        # Calculate speed and ETA
+        if self.start_time and progress > 0:
+            elapsed = time.time() - self.start_time
+            if elapsed > 0:
+                speed = transferred / elapsed  # bytes per second
+                speed_text = f"{self._format_size(speed)}/s"
+
+                # Estimate time remaining
+                if progress < 100:
+                    remaining_bytes = self.file_size - transferred
+                    if speed > 0:
+                        eta_seconds = remaining_bytes / speed
+                        eta_text = self._format_time(eta_seconds)
+                        self.speed_label.config(text=f"Speed: {speed_text} • ETA: {eta_text}")
+                    else:
+                        self.speed_label.config(text=f"Speed: {speed_text}")
+                else:
+                    self.speed_label.config(text=f"Speed: {speed_text} • Complete!")
+
         self.window.update()
+
+    def _format_size(self, size_bytes):
+        """Format bytes into human-readable size."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.2f} MB"
+        else:
+            return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+
+    def _format_time(self, seconds):
+        """Format seconds into human-readable time."""
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        elif seconds < 3600:
+            mins = int(seconds // 60)
+            secs = int(seconds % 60)
+            return f"{mins}m {secs}s"
+        else:
+            hours = int(seconds // 3600)
+            mins = int((seconds % 3600) // 60)
+            return f"{hours}h {mins}m"
 
     def close(self):
         self.window.destroy()
@@ -528,7 +595,7 @@ class YouTubeUploaderApp:
             if entry.get('category') in self.youtube_categories:
                 self.category_var.set(entry.get('category'))
             # Apply video path if it exists and file still exists
-            video_path = entry.get('video_path', '')
+            video_path = entry.get('video_path', entry.get('filename', ''))
             path_msg = ""
             if video_path and Path(video_path).exists():
                 self.video_entry.delete(0, tk.END)
@@ -1405,12 +1472,13 @@ class YouTubeUploaderApp:
         # Create media upload
         media = MediaFileUpload(
             video_path,
-            chunksize=2*1024*1024,  # 2MB chunks
+            chunksize=4*1024*1024,  # 4MB chunks
             resumable=True
         )
 
         # Show progress window
-        progress_window = UploadProgressWindow(self.root, Path(video_path).name)
+        file_size = Path(video_path).stat().st_size
+        progress_window = UploadProgressWindow(self.root, Path(video_path).name, file_size)
 
         # Save to history immediately when upload starts
         history_timestamp = add_to_history({
@@ -1419,7 +1487,7 @@ class YouTubeUploaderApp:
             'tags': tags,
             'category': self.category_var.get(),
             'privacy': self.privacy_var.get(),
-            'filename': Path(video_path).name,
+            'filename': video_path,
             'status': 'uploading',
             'progress': 0,
         })
@@ -1554,26 +1622,53 @@ class YouTubeUploaderApp:
                 privacy_info = f"Privacy: {privacy}"
 
             self._show_upload_complete_dialog(title, privacy_info, video_url, studio_url)
-            self.root.quit()
 
         # Start polling
         self.root.after(100, check_upload)
 
+    def _reset_form(self):
+        """Reset the form for a new upload."""
+        self.video_entry.delete(0, tk.END)
+        self.title_entry.delete(0, tk.END)
+        self.desc_text.delete("1.0", tk.END)
+        self.tags_entry.delete(0, tk.END)
+        self.category_var.set("Entertainment")
+        self.privacy_var.set("scheduled")
+        self.kids_var.set(False)
+        # Reset schedule to tomorrow
+        tomorrow = datetime.now() + timedelta(days=1)
+        self.month_var.set(str(tomorrow.month).zfill(2))
+        self.day_var.set(str(tomorrow.day).zfill(2))
+        self.year_var.set(str(tomorrow.year))
+        self.hour_var.set("12")
+        self.minute_var.set("00")
+        self.ampm_var.set("PM")
+        # Hide thumbnail
+        self.thumbnail_label.pack_forget()
+        self.thumbnail_image = None
+        self.thumbnail_full_image = None
+        # Clear scheduled videos cache
+        self._scheduled_videos_cache = None
+        self.view_schedule_btn.config(state=tk.DISABLED)
+        self.slot_status_label.config(text="")
+
     def _show_upload_complete_dialog(self, title, privacy_info, video_url, studio_url):
-        """Show upload complete dialog with clickable link."""
+        """Show upload complete dialog with clickable link. Returns True if user wants to upload another."""
         import webbrowser
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Upload Complete!")
-        dialog.geometry("450x220")
+        dialog.geometry("450x250")
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
 
+        upload_another = [False]  # Use list to allow modification in nested function
+
         # Center on parent
         dialog.update_idletasks()
         x = self.root.winfo_x() + (self.root.winfo_width() - 450) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - 220) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 250) // 2
         dialog.geometry(f"+{x}+{y}")
 
         frame = ttk.Frame(dialog, padding=20)
@@ -1605,7 +1700,12 @@ class YouTubeUploaderApp:
         def open_studio():
             webbrowser.open(studio_url)
 
+        def do_upload_another():
+            upload_another[0] = True
+            dialog.destroy()
+
         ttk.Button(btn_frame, text="Open in YouTube Studio", command=open_studio).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Upload Another", command=do_upload_another).pack(side=tk.LEFT, padx=(10, 0))
         ttk.Button(btn_frame, text="Close", command=dialog.destroy).pack(side=tk.RIGHT)
 
         # Close on Escape
@@ -1614,6 +1714,12 @@ class YouTubeUploaderApp:
 
         # Wait for dialog to close
         self.root.wait_window(dialog)
+
+        # If user wants to upload another, reset the form
+        if upload_another[0]:
+            self._reset_form()
+        else:
+            self.root.quit()
 
     def run(self):
         """Start the application."""
