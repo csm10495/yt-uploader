@@ -1,0 +1,20 @@
+# Credentials - NEVER commit these
+client_secrets.json
+token.pickle
+
+# Cache files
+categories_cache.json
+
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
