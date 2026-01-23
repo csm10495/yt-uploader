@@ -665,6 +665,9 @@ class YouTubeUploaderApp:
         browse_btn = ttk.Button(file_frame, text="Browse...", command=self._browse_video)
         browse_btn.pack(side=tk.LEFT, padx=(5, 0))
 
+        latest_btn = ttk.Button(file_frame, text="📥 Latest Download", command=self._use_latest_download)
+        latest_btn.pack(side=tk.LEFT, padx=(5, 0))
+
         # Video thumbnail preview (next to browse button)
         self.thumbnail_label = ttk.Label(file_frame, cursor='hand2')
         self.thumbnail_label.bind('<Button-1>', self._show_full_thumbnail)
@@ -1286,6 +1289,42 @@ class YouTubeUploaderApp:
                 self.title_entry.insert(0, Path(filepath).stem)
             # Show thumbnail
             self._update_thumbnail(filepath)
+
+    def _use_latest_download(self):
+        """Find and use the most recent video file from the Downloads directory."""
+        # Get the Downloads directory
+        downloads_dir = Path.home() / "Downloads"
+
+        if not downloads_dir.exists():
+            messagebox.showerror("Error", "Downloads directory not found.")
+            return
+
+        # Find all video files in Downloads
+        video_files = []
+        for ext in VIDEO_EXTENSIONS:
+            video_files.extend(downloads_dir.glob(f"*{ext}"))
+            video_files.extend(downloads_dir.glob(f"*{ext.upper()}"))
+
+        if not video_files:
+            messagebox.showinfo("No Videos Found",
+                               f"No video files found in:\n{downloads_dir}\n\n"
+                               f"Supported formats: {', '.join(VIDEO_EXTENSIONS)}")
+            return
+
+        # Find the most recent file by modification time
+        latest_video = max(video_files, key=lambda f: f.stat().st_mtime)
+
+        # Set the file path
+        self.video_entry.delete(0, tk.END)
+        self.video_entry.insert(0, str(latest_video))
+
+        # Auto-fill title
+        if not self.title_entry.get().strip():
+            self.title_entry.delete(0, tk.END)
+            self.title_entry.insert(0, latest_video.stem)
+
+        # Show thumbnail
+        self._update_thumbnail(str(latest_video))
 
     def _validate_inputs(self):
         """Validate all inputs before upload."""
