@@ -202,8 +202,17 @@ def get_authenticated_service():
     # If no valid credentials, authenticate
     if not credentials or not credentials.valid:
         if credentials and credentials.expired and credentials.refresh_token:
-            credentials.refresh(Request())
-        else:
+            try:
+                credentials.refresh(Request())
+            except Exception as e:
+                # Token refresh failed (expired/revoked), need to re-authenticate
+                print(f"Token refresh failed: {e}")
+                credentials = None
+                if TOKEN_FILE.exists():
+                    TOKEN_FILE.unlink()  # Delete invalid token
+        
+        # If credentials are still invalid, run the auth flow
+        if not credentials or not credentials.valid:
             if not CLIENT_SECRETS_FILE.exists():
                 messagebox.showerror(
                     "Missing Credentials",
