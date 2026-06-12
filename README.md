@@ -1,6 +1,9 @@
 # YouTube Video Uploader
 
-A simple Python script with a GUI to upload videos to YouTube. Drag and drop a video file onto `run_uploader.bat` to launch the uploader.
+Upload videos to YouTube with either a **desktop GUI** or a **web app**.
+
+- **Desktop app** (`run_uploader.bat`): drag-and-drop a video onto the launcher.
+- **Web app** (`run_uploader_web.bat`): runs a local server at <http://localhost:5000> and opens your browser. See [Web App](#web-app) below.
 
 ## Features
 
@@ -75,6 +78,136 @@ Double-click `run_uploader.bat` and use the **Browse** button to select a video
 run_uploader.bat "C:\path\to\video.mp4"
 ```
 
+## Web App
+
+The web app provides a browser-based uploader. It uses its own `client_secrets.json` and the shared `categories_cache.json`, and stores each user's OAuth credentials separately (see [Multi-user isolation](#multi-user-isolation)).
+
+### Running it
+
+1. Complete the OAuth setup in **Steps 1–3** above (the same `client_secrets.json` works — a "Desktop app" client supports the localhost redirect the web app uses).
+2. Double-click **`run_uploader_web.bat`**. On first run it creates the virtual environment and installs dependencies from `requirements-web.txt`.
+3. Your browser opens at <http://localhost:5000>. If it doesn't, open that URL manually.
+4. Click **Sign in with Google** the first time to authenticate. Credentials are cached per browser session, so you won't need to sign in again.
+5. Press **Ctrl+C** in the console window to stop the server.
+
+### Web app features
+
+- 🎬 Select a video by **drag-and-drop** or **browse**, with an inline video preview
+- 📝 Title (with character counter), description, tags, and live category list
+- 🔒 Privacy: Private / Unlisted / Public (with confirmation) / **Scheduled**
+- 📅 **Calculate Next Day Slot** and **View Schedule** — reads your existing scheduled videos and suggests the next daily slot
+- 👶 Made for kids (COPPA) toggle
+- 📊 Upload progress with speed and ETA, plus **Cancel** (deletes the partially uploaded video from YouTube)
+- 🔐 OAuth2 with cached credentials
+
+> **Note:** The web app is intended to run **locally** on your own machine (the server uploads to YouTube on your behalf). The browser only ever sends the file you explicitly choose — the server never browses its own filesystem. Don't expose the app to the public internet.
+
+### Multi-user isolation
+
+The web app is multi-user safe. Each browser session is treated as a separate user, identified by a random id stored in a **signed session cookie** (signed with a persistent key in `web_data/secret_key`). Per-user data is isolated:
+
+- **Credentials** are stored per user in `web_data/<id>/token.pickle` — one user signing in never authenticates anyone else.
+- An upload's progress/cancel endpoints only work for the session that started it.
+- The server never reads its own filesystem — only files you explicitly upload from your browser are sent to YouTube.
+
+The `web_data/` directory is git-ignored. Note: the web app's credentials are separate from the desktop app's `token.pickle`, so you sign in to each independently.
+
+## Running with Docker
+
+The web app ships with a production-ready image: it runs under **gunicorn** (a single `gthread` worker — required because in-progress upload state is kept in memory) and is meant to sit behind a TLS-terminating reverse proxy (nginx/Caddy/Traefik) in production.
+
+### How OAuth credentials enter the container
+
+No secrets are baked into the image (`.dockerignore` excludes them, and the `Dockerfile` copies only application code). Credentials are provided at **run time**:
+
+- **`client_secrets.json`** (your Google OAuth client) is **bind-mounted read-only** into the container at `/app/client_secrets.json`.
+- **Per-user tokens** are created at runtime when each user signs in via the browser, and are written to `/data/<uid>/token.pickle` on a mounted volume (along with the cookie-signing key at `/data/secret_key`), so they survive restarts.
+
+### Pull from GHCR
+
+Every push to `master` publishes an image to GitHub Container Registry via the included workflow (`.github/workflows/publish.yml`):
+
+```bash
+docker pull ghcr.io/csm10495/yt-uploader:latest
+```
+
+Images are tagged `latest` and `sha-<commit>`.
+
+### Run via the Docker CLI
+
+Build locally (or use the GHCR image above) and run:
+
+```bash
+docker run -d --name yt-uploader -p 8000:8000 \
+  -e PUBLIC_BASE_URL=http://localhost:8000 \
+  -e TZ=America/Los_Angeles \
+  -e UPLOAD_TMP_DIR=/data/uploads \
+  -v "$PWD/client_secrets.json:/app/client_secrets.json:ro" \
+  -v yt_uploader_data:/data \
+  ghcr.io/csm10495/yt-uploader:latest
+```
+
+On **Windows cmd**:
+
+```bat
+docker run -d --name yt-uploader -p 8000:8000 ^
+  -e PUBLIC_BASE_URL=http://localhost:8000 ^
+  -e TZ=America/Los_Angeles ^
+  -e UPLOAD_TMP_DIR=/data/uploads ^
+  -v "%cd%\client_secrets.json:/app/client_secrets.json:ro" ^
+  -v yt_uploader_data:/data ^
+  ghcr.io/csm10495/yt-uploader:latest
+```
+
+Then open the value of `PUBLIC_BASE_URL` in your browser and click **Sign in with Google**.
+
+> The OAuth **redirect URI** registered in the Google console must exactly match `${PUBLIC_BASE_URL}/oauth2callback`. For local use a **Desktop app** OAuth client accepts any `http://localhost:<port>` callback automatically; for a public domain create a **Web application** client and register `https://your-domain/oauth2callback`.
+
+### Run via Docker Compose
+
+```yaml
+services:
+  yt-uploader:
+    image: ghcr.io/csm10495/yt-uploader:latest
+    # Or build locally instead of pulling:
+    # build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Externally reachable URL; used to build the OAuth redirect URI.
+      PUBLIC_BASE_URL: http://localhost:8000
+      # Timezone so scheduled-publish times match your local clock.
+      TZ: America/Los_Angeles
+      # Stage uploads on the volume rather than the container's writable layer.
+      UPLOAD_TMP_DIR: /data/uploads
+      # Uncomment when running behind an HTTPS reverse proxy:
+      # TRUST_PROXY: "1"
+    volumes:
+      - ./client_secrets.json:/app/client_secrets.json:ro
+      - yt_uploader_data:/data
+    restart: unless-stopped
+
+volumes:
+  yt_uploader_data:
+```
+
+Bring it up with `docker compose up -d`.
+
+### Configuration (environment variables)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PUBLIC_BASE_URL` | `http://localhost:5000` | Externally reachable base URL; builds the OAuth redirect URI and enables secure cookies when `https`. |
+| `OAUTH_REDIRECT_URI` | `${PUBLIC_BASE_URL}/oauth2callback` | Override the redirect URI explicitly if needed. |
+| `TRUST_PROXY` | `0` | Set to `1` behind a reverse proxy to honor `X-Forwarded-*` headers. |
+| `SECRET_KEY` | auto / `web_data/secret_key` | Cookie-signing key; set explicitly to share across replicas. |
+| `WEB_DATA_DIR` | `/data` (in image) | Where per-user tokens and the secret key are stored. |
+| `UPLOAD_TMP_DIR` | system temp | Where browser uploads are staged before sending to YouTube. |
+| `MAX_CONTENT_LENGTH` | `16` GB | Max upload size in bytes. |
+| `TZ` | `UTC` | Container timezone (affects scheduled-publish conversion). |
+
+> **Run it behind a reverse proxy / don't expose it directly to the internet.** The server uploads to YouTube on behalf of signed-in users; keep it on a trusted network or behind authentication.
+
 ## Supported Video Formats
 
 - MP4, AVI, MOV, MKV, WMV, FLV, WebM, M4V, MPEG, MPG, 3GP
@@ -91,11 +224,22 @@ run_uploader.bat "C:\path\to\video.mp4"
 
 ```
 yt-uploader/
-├── run_uploader.bat      # Main launcher (drag videos here)
-├── yt_uploader.py        # Python upload script
-├── requirements.txt      # Python dependencies
+├── run_uploader.bat      # Desktop launcher (drag videos here)
+├── run_uploader_web.bat  # Web app launcher (opens http://localhost:5000)
+├── yt_uploader.py        # Desktop GUI upload script
+├── app.py                # Web app (Flask) backend
+├── templates/            # Web app HTML
+├── static/               # Web app CSS/JS
+├── requirements.txt      # Desktop dependencies
+├── requirements-web.txt  # Web app dependencies
+├── Dockerfile            # Production image (gunicorn)
+├── gunicorn.conf.py      # gunicorn config (single gthread worker)
+├── .dockerignore         # Keeps secrets/venv out of the build context
+├── .github/workflows/    # CI: publish image to GHCR on push to master
 ├── client_secrets.json   # YOUR OAuth credentials (you create this)
-├── token.pickle          # Saved auth token (auto-created)
+├── token.pickle          # Desktop app auth token (auto-created)
+├── categories_cache.json # Cached YouTube categories (auto-created, shared)
+├── web_data/             # Web app per-user data: OAuth tokens (auto-created)
 ├── venv/                 # Virtual environment (auto-created)
 └── README.md             # This file
 ```

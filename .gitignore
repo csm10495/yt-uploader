@@ -1,6 +1,11 @@
 # Credentials - NEVER commit these
 client_secrets.json
+client_secret*.json
 token.pickle
+*.pickle
+
+# Per-user web app data (tokens, per-user history, secret key)
+web_data/
 
 # Cache files
 categories_cache.json

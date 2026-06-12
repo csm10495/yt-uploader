@@ -1,0 +1,29 @@
+# Secrets and per-user data must never go into the image
+client_secrets.json
+client_secret*.json
+token.pickle
+web_data/
+*.pickle
+
+# Local cache/history files
+categories_cache.json
+upload_history.json
+
+# Python virtualenv and caches
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Desktop-only app files (not needed in the web image)
+yt_uploader.py
+run_uploader.bat
+run_uploader_web.bat
+requirements.txt
+
+# VCS / IDE / misc
+.git/
+.gitignore
+.vscode/
+.idea/
+*.md

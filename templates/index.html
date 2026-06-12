@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YouTube Video Uploader</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='4' width='24' height='24' rx='5' fill='%23FF0000'/%3E%3Cpolygon points='13,11 13,21 22,16' fill='white'/%3E%3C/svg%3E" />
+  <script>
+    // Apply the saved theme before first paint to avoid a flash of the
+    // wrong colors. "auto" leaves no attribute so the CSS media query wins.
+    (function () {
+      try {
+        var t = localStorage.getItem("theme");
+        if (t === "dark" || t === "light") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="28" height="28"><rect x="4" y="4" width="24" height="24" rx="5" fill="#FF0000"/><polygon points="13,11 13,21 22,16" fill="white"/></svg>
+      </span>
+      <h1>YouTube Video Uploader</h1>
+    </div>
+    <div class="top-actions">
+      <button id="themeToggle" class="theme-toggle" title="Theme: Auto" aria-label="Toggle theme">🖥️</button>
+
+      <!-- Signed-in account menu (shows channel name; click for sign out) -->
+      <div id="accountMenu" class="account-menu hidden">
+        <button id="accountBtn" class="account-btn" aria-haspopup="true" aria-expanded="false">
+          <span class="yt-logo" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="20" height="20"><rect x="4" y="7" width="24" height="18" rx="5" fill="#FF0000"/><polygon points="14,12 14,20 21,16" fill="white"/></svg>
+          </span>
+          <span id="accountName" class="account-name"></span>
+          <span class="caret" aria-hidden="true">▾</span>
+        </button>
+        <div id="accountDropdown" class="account-dropdown hidden">
+          <button id="signOutItem" class="dropdown-item">Sign out</button>
+        </div>
+      </div>
+
+      <!-- Sign-in button (shown when not authenticated) -->
+      <button id="signInBtn" class="btn btn-light hidden">Sign in with Google</button>
+
+      <span id="authStatus" class="auth-pill hidden">Checking…</span>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="authBanner" class="banner hidden"></div>
+
+    <!-- Sign-in prompt shown until the user authenticates -->
+    <div id="signInPrompt" class="banner sign-in-prompt hidden">
+      <span>🔒 Sign in with your Google account to upload videos.</span>
+      <button id="promptSignInBtn" class="btn btn-primary btn-small">Sign in with Google</button>
+    </div>
+
+    <!-- The whole form is disabled (greyed out) until the user is signed in -->
+    <fieldset id="uploadForm" class="upload-form" disabled>
+
+    <!-- Video source -->
+    <section class="card">
+      <label class="field-label">Video File</label>
+      <div id="dropZone" class="drop-zone">
+        <p class="dz-text">Drag &amp; drop a video here, or
+          <button type="button" id="browseBtn" class="link-btn">browse</button>
+        </p>
+        <input type="file" id="videoInput" accept="video/*" hidden />
+      </div>
+      <div id="selectedFile" class="selected-file hidden">
+        <video id="videoPreview" class="video-preview" controls preload="metadata"></video>
+        <div class="file-meta">
+          <div id="fileName" class="file-name"></div>
+          <div id="fileSize" class="file-size"></div>
+          <button type="button" id="clearFileBtn" class="link-btn">Remove</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Metadata -->
+    <section class="card">
+      <label class="field-label" for="title">Title <span class="req">*</span>
+        <span id="titleCount" class="counter">0/100</span>
+      </label>
+      <input type="text" id="title" maxlength="100" placeholder="Video title" />
+
+      <label class="field-label" for="description">Description</label>
+      <textarea id="description" rows="4" placeholder="Tell viewers about your video"></textarea>
+
+      <label class="field-label" for="tags">Tags (comma-separated)</label>
+      <input type="text" id="tags" placeholder="tag1, tag2, tag3" />
+
+      <label class="field-label" for="category">Category</label>
+      <select id="category"></select>
+    </section>
+
+    <!-- Privacy -->
+    <section class="card">
+      <label class="field-label">Privacy <span class="req">*</span></label>
+      <div class="radio-group">
+        <label class="radio"><input type="radio" name="privacy" value="private" /> Private (only you can see)</label>
+        <label class="radio"><input type="radio" name="privacy" value="unlisted" /> Unlisted (anyone with link can see)</label>
+        <label class="radio"><input type="radio" name="privacy" value="public" /> Public (everyone can see)</label>
+        <label class="radio"><input type="radio" name="privacy" value="scheduled" checked /> Scheduled (publish at a specific time)</label>
+      </div>
+      <p id="publicWarning" class="warning hidden">⚠️ Public videos are immediately visible to everyone!</p>
+
+      <!-- Schedule -->
+      <div id="scheduleBox" class="schedule-box">
+        <div class="schedule-row">
+          <div>
+            <label class="field-label small">Date</label>
+            <input type="date" id="scheduleDate" />
+          </div>
+          <div>
+            <label class="field-label small">Time (local)</label>
+            <input type="time" id="scheduleTime" step="300" />
+          </div>
+        </div>
+        <p class="hint">Local time — converted to UTC for YouTube.</p>
+        <div class="schedule-actions">
+          <button type="button" id="nextSlotBtn" class="btn btn-small">📅 Calculate Next Day Slot</button>
+          <button type="button" id="viewScheduleBtn" class="btn btn-small" disabled>📋 View Schedule</button>
+        </div>
+        <p id="slotStatus" class="hint"></p>
+      </div>
+    </section>
+
+    <!-- Made for kids -->
+    <section class="card">
+      <label class="checkbox">
+        <input type="checkbox" id="madeForKids" /> Made for kids (COPPA compliance)
+      </label>
+    </section>
+
+    <div class="submit-row">
+      <button id="uploadBtn" class="btn btn-primary">Upload</button>
+    </div>
+
+    </fieldset>
+  </main>
+
+  <!-- Progress modal -->
+  <div id="progressModal" class="modal hidden">
+    <div class="modal-content">
+      <h2 id="progressTitle">Uploading…</h2>
+      <div class="progress-track"><div id="progressBar" class="progress-fill"></div></div>
+      <div class="progress-meta">
+        <span id="progressStatus">Starting upload…</span>
+        <span id="progressPercent">0%</span>
+      </div>
+      <div id="transferInfo" class="hint"></div>
+      <div id="speedInfo" class="hint">Calculating speed…</div>
+      <div class="modal-actions">
+        <button id="cancelUploadBtn" class="btn btn-danger">Cancel Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Complete modal -->
+  <div id="completeModal" class="modal hidden">
+    <div class="modal-content">
+      <h2 class="success">✓ Video uploaded successfully!</h2>
+      <p><strong>Title:</strong> <span id="completeTitle"></span></p>
+      <p id="completePrivacy"></p>
+      <p><strong>URL:</strong> <a id="completeUrl" href="#" target="_blank"></a></p>
+      <div class="modal-actions">
+        <a id="studioLink" class="btn btn-light" href="#" target="_blank">Open in YouTube Studio</a>
+        <button id="uploadAnotherBtn" class="btn btn-primary">Upload Another</button>
+        <button id="closeCompleteBtn" class="btn btn-light">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Schedule modal -->
+  <div id="scheduleModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-head">
+        <h2>Scheduled Videos</h2>
+        <button id="closeScheduleBtn" class="link-btn">✕</button>
+      </div>
+      <div id="scheduleListBox" class="schedule-list"></div>
+      <div class="legend">
+        <span class="legend-item latest">Latest scheduled</span>
+        <span class="legend-item newvid">Your new video</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
